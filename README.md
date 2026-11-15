@@ -146,7 +146,7 @@ npm run db:generate
 # Apply migrations to your Neon database
 npm run db:migrate
 ```
-
+w
 To visually explore and manipulate your database records:
 
 ```bash
