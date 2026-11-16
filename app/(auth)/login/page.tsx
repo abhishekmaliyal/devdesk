@@ -2,25 +2,115 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Lock, Eye, EyeOff, Loader2 } from "lucide-react";
+import { signIn } from "@/lib/auth-client";
 
-export default function LoginPage() {
+function LoginForm() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const formRef = React.useRef<HTMLFormElement>(null);
+
   const [showPassword, setShowPassword] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
+
+  // Extract callback URL from query parameters (supports callbackURL, callbackUrl, redirect)
+  const callbackURL =
+    searchParams.get("callbackURL") ||
+    searchParams.get("callbackUrl") ||
+    searchParams.get("redirect") ||
+    "/";
+
+  // Check for any error passed in URL (e.g., failed OAuth redirects)
+  const urlError = searchParams.get("error");
+  const initialError = urlError
+    ? urlError === "OAuthCallbackError"
+      ? "Failed to authenticate with SSO provider."
+      : urlError
+    : null;
+
+  const [error, setError] = React.useState<string | null>(initialError);
+
+  const handleSocialSignIn = React.useCallback(
+    async (provider: "github" | "google") => {
+      setError(null);
+      try {
+        await signIn.social({
+          provider,
+          callbackURL,
+        });
+      } catch {
+        setError(`Failed to sign in with ${provider}.`);
+      }
+    },
+    [callbackURL]
+  );
+
+  // Handle keyboard shortcuts (ESC to clear, ⌘G for GitHub, ⌘L for Google, ↵ Enter to submit)
+  React.useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      // ESC to clear form and reset state
+      if (e.key === "Escape") {
+        formRef.current?.reset();
+        setError(null);
+        formRef.current?.querySelector<HTMLInputElement>("#email")?.focus();
+      }
+
+      // Cmd/Ctrl + G for GitHub SSO
+      if ((e.metaKey || e.ctrlKey) && (e.key === "g" || e.key === "G" || e.code === "KeyG")) {
+        e.preventDefault();
+        handleSocialSignIn("github");
+      }
+
+      // Cmd/Ctrl + L for Google SSO
+      if ((e.metaKey || e.ctrlKey) && (e.key === "l" || e.key === "L" || e.code === "KeyL")) {
+        e.preventDefault();
+        handleSocialSignIn("google");
+      }
+
+      // Cmd/Ctrl + Enter to submit form
+      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+        e.preventDefault();
+        formRef.current?.requestSubmit();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleSocialSignIn]);
 
   async function handleFormSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+
+    const formData = new FormData(event.currentTarget);
+    const email = (formData.get("email") as string)?.trim();
+    const password = formData.get("password") as string;
+    const rememberDevice = formData.get("remember") === "on";
+
+    if (!email || !password) {
+      setError("Please fill in all required fields.");
+      return;
+    }
+
+    setLoading(true);
     try {
-      const formData = new FormData(event.currentTarget);
-      const email = formData.get("email") as string;
-      const password = formData.get("password") as string;
-      const rememberDevice = formData.get("remember") === "on";
-      console.log({ email, password, rememberDevice });
-      setLoading(true);
+      const result = await signIn.email({
+        email,
+        password,
+        rememberMe: rememberDevice,
+        callbackURL,
+      });
+
+      if (result.error) {
+        setError(result.error.message ?? "Invalid email or password.");
+        return;
+      }
+
+      router.push(callbackURL);
+      router.refresh();
     } catch {
-      setError("error submitting form");
+      setError("Something went wrong. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -29,17 +119,17 @@ export default function LoginPage() {
   return (
     <div className="flex flex-col items-center justify-center p-4">
       {/* Main Auth Card */}
-      <div className="w-full max-w-[440px] border border-zinc-800 bg-[#0e0e10] text-zinc-100 shadow-2xl">
+      <div className="w-full max-w-[540px] border border-zinc-800 bg-[#0e0e10] text-zinc-100 shadow-2xl">
         {/* Top Status Header */}
         <div className="flex items-center justify-between border-b border-zinc-800/80 px-4 py-2.5">
           <div className="flex items-center gap-2">
             <span className="h-2 w-2 bg-[#00E599]" />
             <span className="font-mono text-xs font-semibold tracking-wider text-zinc-200">
-              IDP
+              DEVDESK IDP
             </span>
           </div>
           <span className="border border-zinc-800 bg-zinc-900/60 px-2 py-0.5 font-mono text-[11px] text-zinc-400">
-            v1.0
+            v1.4-rc2
           </span>
         </div>
 
@@ -59,6 +149,7 @@ export default function LoginPage() {
           <div className="grid grid-cols-2 gap-3 mb-6">
             <button
               type="button"
+              onClick={() => handleSocialSignIn("github")}
               className="flex items-center justify-between border border-zinc-800 bg-zinc-900/80 hover:bg-zinc-800/90 px-3 py-2.5 text-xs text-zinc-200 transition-colors"
             >
               <div className="flex items-center gap-2 font-medium">
@@ -74,6 +165,7 @@ export default function LoginPage() {
 
             <button
               type="button"
+              onClick={() => handleSocialSignIn("google")}
               className="flex items-center justify-between border border-zinc-800 bg-zinc-900/80 hover:bg-zinc-800/90 px-3 py-2.5 text-xs text-zinc-200 transition-colors"
             >
               <div className="flex items-center gap-2 font-medium">
@@ -112,7 +204,7 @@ export default function LoginPage() {
           </div>
 
           {/* Credentials Form */}
-          <form className="space-y-4" onSubmit={handleFormSubmit}>
+          <form ref={formRef} className="space-y-4" onSubmit={handleFormSubmit}>
             {error && (
               <div className="border border-red-900/60 bg-red-950/40 p-2.5 font-mono text-xs text-red-400">
                 {error}
@@ -126,7 +218,7 @@ export default function LoginPage() {
                   htmlFor="email"
                   className="font-mono text-[11px] font-medium tracking-wider text-zinc-400 uppercase"
                 >
-                  WORK EMAIL
+                  01 // WORK EMAIL
                 </label>
                 <span className="font-mono text-[11px] text-zinc-600">
                   name@company.com
@@ -141,8 +233,11 @@ export default function LoginPage() {
                   name="email"
                   type="email"
                   required
+                  autoFocus
+                  autoComplete="email"
+                  disabled={loading}
                   placeholder="alex@acme.corp"
-                  className="w-full bg-transparent py-2.5 pr-3 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 outline-none"
+                  className="w-full bg-transparent py-2.5 pr-3 font-mono text-xs text-zinc-200 placeholder:text-zinc-600 outline-none disabled:opacity-50"
                 />
               </div>
             </div>
@@ -154,7 +249,7 @@ export default function LoginPage() {
                   htmlFor="password"
                   className="font-mono text-[11px] font-medium tracking-wider text-zinc-400 uppercase"
                 >
-                  PASSWORD
+                  02 // PASSWORD
                 </label>
                 <Link
                   href="/reset-password"
@@ -170,8 +265,10 @@ export default function LoginPage() {
                   name="password"
                   type={showPassword ? "text" : "password"}
                   required
+                  autoComplete="current-password"
+                  disabled={loading}
                   placeholder="••••••••••"
-                  className="w-full bg-transparent py-2.5 pr-2 font-mono text-xs tracking-wider text-zinc-200 placeholder:text-zinc-600 outline-none"
+                  className="w-full bg-transparent py-2.5 pr-2 font-mono text-xs tracking-wider text-zinc-200 placeholder:text-zinc-600 outline-none disabled:opacity-50"
                 />
                 <button
                   type="button"
@@ -193,6 +290,7 @@ export default function LoginPage() {
                 id="remember"
                 name="remember"
                 type="checkbox"
+                defaultChecked
                 className="h-3.5 w-3.5 rounded-none border border-zinc-700 bg-zinc-900 text-white accent-white focus:ring-0"
               />
               <label
@@ -224,7 +322,11 @@ export default function LoginPage() {
             <p className="font-sans text-xs text-zinc-400">
               Don&apos;t have an organization workspace?{" "}
               <Link
-                href="/register"
+                href={
+                  callbackURL !== "/"
+                    ? `/register?callbackURL=${encodeURIComponent(callbackURL)}`
+                    : "/register"
+                }
                 className="font-mono font-bold text-white hover:underline"
               >
                 Create account →
@@ -235,7 +337,7 @@ export default function LoginPage() {
       </div>
 
       {/* Bottom Keyboard Navigation Hints */}
-      <div className="mt-4 flex w-full max-w-[440px] items-center justify-between font-mono text-[11px] text-zinc-600">
+      <div className="mt-4 flex w-full max-w-[540px] items-center justify-between font-mono text-[11px] text-zinc-600">
         <div className="flex items-center gap-1.5">
           <span className="border border-zinc-800 bg-zinc-900/60 px-1.5 py-0.5 text-zinc-400">
             Tab
@@ -250,5 +352,19 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <React.Suspense
+      fallback={
+        <div className="flex items-center justify-center p-8 font-mono text-xs text-zinc-500">
+          Loading authentication...
+        </div>
+      }
+    >
+      <LoginForm />
+    </React.Suspense>
   );
 }
